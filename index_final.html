@@ -1,0 +1,856 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>InteligenTerrario - RepTeam OS</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Paho MQTT WebSockets CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
+    <!-- FontAwesome para Íconos -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body {
+            background-color: #080808;
+            background-image: radial-gradient(circle at 50% 15%, #1a0f00 0%, #030303 100%);
+            color: #E5E7EB;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .glass-card {
+            background: rgba(18, 18, 18, 0.7);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 102, 0, 0.25);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
+        }
+
+        .glass-card-interactive {
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .glass-card-interactive:hover {
+            border-color: rgba(255, 102, 0, 0.6);
+            box-shadow: 0 0 20px rgba(255, 102, 0, 0.35);
+            transform: translateY(-2px);
+        }
+
+        .act-state-on {
+            border: 2px solid #22c55e !important;
+            box-shadow: 0 0 15px rgba(34, 197, 94, 0.4) !important;
+            color: #4ade80 !important;
+        }
+        .act-state-off {
+            border: 2px solid #ef4444 !important;
+            box-shadow: 0 0 15px rgba(239, 68, 68, 0.35) !important;
+            color: #f87171 !important;
+        }
+
+        .water-drop-wrapper {
+            width: 220px;
+            height: 220px;
+            border-radius: 0 50% 50% 50%;
+            transform: rotate(45deg);
+            position: relative;
+            overflow: hidden;
+            border: 2px solid rgba(59, 130, 246, 0.5);
+            box-shadow: 0 0 30px rgba(59, 130, 246, 0.3);
+            cursor: pointer;
+            background: rgba(15, 23, 42, 0.6);
+        }
+
+        .water-wave {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 0%;
+            background: linear-gradient(180deg, rgba(59, 130, 246, 0.85) 0%, rgba(29, 78, 216, 0.95) 100%);
+            transition: height 0.8s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .water-drop-content {
+            transform: rotate(-45deg);
+            position: relative;
+            z-index: 10;
+        }
+
+        .tank-cylinder {
+            width: 28px;
+            height: 110px;
+            border-radius: 14px;
+            background: rgba(15, 15, 15, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .tank-fill {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            transition: height 0.6s ease-in-out;
+        }
+
+        .day-pill {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            color: #9CA3AF;
+        }
+
+        .day-pill.selected {
+            background: #FF6600;
+            color: #FFFFFF;
+            border-color: #FF8800;
+            box-shadow: 0 0 12px rgba(255, 102, 0, 0.5);
+        }
+
+        input[type="time"]::-webkit-calendar-picker-indicator {
+            background: transparent;
+            bottom: 0;
+            color: transparent;
+            cursor: pointer;
+            height: auto;
+            left: 0;
+            position: absolute;
+            right: 0;
+            top: 0;
+            width: auto;
+        }
+        input[type="time"] {
+            position: relative;
+            text-align: center;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col justify-between p-4 md:p-8">
+
+    <!-- HEADER / LOGO, PRESET ACTIVO, RELOJ Y ALERTAS -->
+    <header class="w-full flex justify-between items-center mb-4">
+        <div>
+            <h1 class="text-2xl font-extrabold tracking-wider text-white">INTELIGEN<span class="text-orange-500">TERRARIO</span></h1>
+            <p class="text-xs text-gray-400">RepTeam OS &bull; Control Biológico</p>
+        </div>
+
+        <div class="flex items-center gap-4 md:gap-6">
+            <div class="glass-card px-4 py-1.5 rounded-full border border-orange-500/40 flex items-center gap-2">
+                <span class="w-2.5 h-2.5 rounded-full bg-orange-500 animate-pulse"></span>
+                <span class="text-xs font-semibold text-gray-300">PRESET ACTIVO:</span>
+                <span id="activePresetBadge" class="text-xs font-bold text-orange-400 uppercase">CARGANDO...</span>
+            </div>
+
+            <div id="clockDisplay" class="text-lg md:text-xl font-mono text-orange-400 font-semibold tracking-wider">00:00:00</div>
+            
+        </div>
+    </header>
+
+    <!-- DASHBOARD PRINCIPAL CON RANGOS OBJETIVO DÍA/NOCHE -->
+    <main class="max-w-6xl mx-auto w-full grid grid-cols-1 md:grid-cols-12 gap-6 items-center my-auto py-4">
+        
+        <!-- BICLIMA WARM / COOL CON RANGOS SEGÚN FOTOPERÍODO -->
+        <div class="md:col-span-5 flex justify-center">
+            <div class="glass-card rounded-full w-72 h-72 md:w-80 md:h-80 relative flex overflow-hidden border-2 border-orange-500/30 shadow-2xl">
+                <!-- SECCIÓN WARM -->
+                <div onclick="openChartModal('Temperatura Cálida', 'warm')" class="w-1/2 h-full border-r border-orange-500/20 flex flex-col items-center justify-center cursor-pointer hover:bg-red-500/10 transition-all group relative px-2 text-center">
+                    <i class="fa-solid fa-temperature-arrow-up text-red-400/90 text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
+                    <span id="tempWarmVal" class="text-3xl md:text-4xl font-extrabold text-white">--°C</span>
+                    <span class="text-xs tracking-widest text-red-400/90 font-semibold mt-0.5">WARM</span>
+                    
+                    <!-- WARNING ELEGANTE Y COMPACTO PARA WARM -->
+                    <span id="warnWarmBadge" class="hidden my-1 bg-red-950/80 text-red-400 border border-red-500/50 text-[9px] font-bold px-2 py-0.5 rounded tracking-tighter">
+                        ⚠️ FUERA DE PARÁMETRO
+                    </span>
+
+                    <span id="goalWarmVal" class="text-[10px] font-bold text-orange-400/80 mt-0.5 uppercase">OBJETIVO: --</span>
+                </div>
+
+                <!-- SECCIÓN COOL (SIN ALERTA) -->
+                <div onclick="openChartModal('Temperatura Fresca', 'cool')" class="w-1/2 h-full flex flex-col items-center justify-center cursor-pointer hover:bg-cyan-500/10 transition-all group relative px-2 text-center">
+                    <i class="fa-solid fa-temperature-arrow-down text-sky-400 text-2xl mb-1 group-hover:scale-110 transition-transform"></i>
+                    <span id="tempCoolVal" class="text-3xl md:text-4xl font-extrabold text-white">--°C</span>
+                    <span class="text-xs tracking-widest text-sky-400 font-semibold mt-0.5 mb-1">COOL</span>
+                    
+                    <span id="goalCoolVal" class="text-[10px] font-bold text-cyan-400/80 mt-0.5 uppercase">OBJETIVO: --</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- GOTA DE AGUA CON RANGO DE HUMEDAD -->
+        <div class="md:col-span-5 flex justify-center">
+            <div onclick="openChartModal('Humedad General', 'humidity')" class="water-drop-wrapper flex items-center justify-center relative">
+                <div id="waterWaveBg" class="water-wave"></div>
+                <div class="water-drop-content text-center px-2">
+                    <i class="fa-solid fa-droplet text-blue-300 text-2xl mb-1"></i>
+                    <div id="humidityVal" class="text-4xl font-extrabold text-white">--%</div>
+                    <span class="text-xs tracking-widest text-blue-200 font-semibold block">HUMEDAD</span>
+                    
+                    <!-- WARNING ELEGANTE Y COMPACTO PARA HUMEDAD -->
+                    <div class="flex justify-center my-1">
+                        <span id="warnHumBadge" class="hidden bg-red-950/80 text-red-400 border border-red-500/50 text-[9px] font-bold px-2 py-0.5 rounded tracking-tighter">
+                            ⚠️ FUERA DE PARÁMETRO
+                        </span>
+                    </div>
+
+                    <span id="goalHumidityVal" class="text-[10px] font-bold text-blue-300/80 block uppercase">OBJETIVO: --</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- CILINDROS DE TANQUES -->
+        <div class="md:col-span-2 flex flex-row md:flex-col items-center justify-center gap-6 glass-card p-4 rounded-2xl">
+            <div class="flex flex-col items-center gap-2" title="Tanque Agua Lluvia">
+                <div class="tank-cylinder">
+                    <div id="tankWaterFill" class="tank-fill bg-blue-500" style="height: 0%;"></div>
+                </div>
+                <div class="text-center font-mono">
+                    <span class="block text-[10px] text-blue-400 font-bold">TANK</span>
+                    <span id="tankWaterVal" class="text-xs font-semibold text-gray-200">--%</span>
+                </div>
+            </div>
+
+            <div class="flex flex-col items-center gap-2" title="Tanque Desagüe (Agua Sucia)">
+                <div class="tank-cylinder">
+                    <div id="tankSumpFill" class="tank-fill bg-emerald-600" style="height: 0%;"></div>
+                </div>
+                <div class="text-center font-mono">
+                    <span class="block text-[10px] text-emerald-500 font-bold">SUMP</span>
+                    <span id="tankSumpVal" class="text-xs font-semibold text-gray-200">--%</span>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- BARRA INFERIOR / SELECTOR DE PRESETS DB Y CONTROLES -->
+    <footer class="w-full max-w-6xl mx-auto mt-4">
+        <div class="grid grid-cols-1 md:grid-cols-12 gap-4 items-center">
+            
+            <!-- SELECTOR DE PRESETS -->
+            <div class="md:col-span-3">
+                <select id="presetSelect" onchange="promptPresetChange()" class="glass-card w-full text-white bg-black/70 p-3 rounded-xl border border-orange-500/40 focus:outline-none focus:border-orange-500 text-xs font-semibold cursor-pointer truncate">
+                    <!-- POBLADO DINÁMICAMENTE CON FORMATEO MEJORADO -->
+                </select>
+            </div>
+
+            <!-- CONTROLES MANUALES -->
+            <div class="md:col-span-9 grid grid-cols-6 gap-2">
+                <div id="act-heat" class="glass-card act-state-off p-3 rounded-xl flex flex-col items-center justify-center cursor-not-allowed opacity-80" title="Control Automático por Temperatura">
+                    <i class="fa-solid fa-fire text-base mb-1"></i>
+                    <span class="text-[10px] font-semibold">HEAT</span>
+                </div>
+
+                <div id="act-fan" class="glass-card act-state-off p-3 rounded-xl flex flex-col items-center justify-center cursor-not-allowed opacity-80" title="Control Automático por Humedad">
+                    <i class="fa-solid fa-fan text-base mb-1"></i>
+                    <span class="text-[10px] font-semibold">FAN</span>
+                </div>
+
+                <div id="act-pump" class="glass-card act-state-off p-3 rounded-xl flex flex-col items-center justify-between relative group">
+                    <button type="button" onclick="openConfigModal('mist', 'Sistema Lluvia');" class="absolute top-1 right-1 text-gray-400 hover:text-orange-400 text-[10px] p-1">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                    <i class="fa-solid fa-cloud-rain text-base mb-1 mt-1 cursor-default"></i>
+                    <span id="label-mist" class="text-[10px] font-semibold cursor-default">MIST</span>
+                </div>
+
+                <div id="act-led" class="glass-card glass-card-interactive act-state-off p-3 rounded-xl flex flex-col items-center justify-between relative group">
+                    <button type="button" onclick="event.stopPropagation(); openConfigModal('led', 'Iluminación LED');" class="absolute top-1 right-1 text-gray-400 hover:text-orange-400 text-[10px] p-1">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                    <i class="fa-solid fa-sun text-base mb-1 mt-1 cursor-pointer" onclick="toggleActuator('led')"></i>
+                    <span id="label-led" class="text-[10px] font-semibold cursor-pointer" onclick="toggleActuator('led')">LED</span>
+                </div>
+
+                <div id="act-plugA" class="glass-card glass-card-interactive act-state-off p-3 rounded-xl flex flex-col items-center justify-between relative group">
+                    <button type="button" onclick="event.stopPropagation(); openConfigModal('plugA', 'SmartPlug A');" class="absolute top-1 right-1 text-gray-400 hover:text-orange-400 text-[10px] p-1">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                    <i class="fa-solid fa-plug text-base mb-1 mt-1 cursor-pointer" onclick="toggleActuator('plugA')"></i>
+                    <span id="label-plugA" class="text-[10px] font-semibold truncate max-w-full cursor-pointer" onclick="toggleActuator('plugA')">FOCO UVB 5.0</span>
+                </div>
+
+                <div id="act-plugB" class="glass-card glass-card-interactive act-state-off p-3 rounded-xl flex flex-col items-center justify-between relative group">
+                    <button type="button" onclick="event.stopPropagation(); openConfigModal('plugB', 'SmartPlug B');" class="absolute top-1 right-1 text-gray-400 hover:text-orange-400 text-[10px] p-1">
+                        <i class="fa-solid fa-gear"></i>
+                    </button>
+                    <i class="fa-solid fa-plug-circle-bolt text-base mb-1 mt-1 cursor-pointer" onclick="toggleActuator('plugB')"></i>
+                    <span id="label-plugB" class="text-[10px] font-semibold truncate max-w-full cursor-pointer" onclick="toggleActuator('plugB')">LÁMPARA CERÁMICA</span>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <!-- MODAL CONFIRMACIÓN DE PRESET CON DATOS DÍA Y NOCHE -->
+    <div id="presetConfirmModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+        <div class="glass-card max-w-md w-full p-6 rounded-3xl relative border border-orange-500/50 text-center space-y-4">
+            <h3 class="text-lg font-bold text-orange-400">Cambiar Preset Biológico</h3>
+            <p class="text-xs text-gray-300">¿Deseas cambiar el preset activo a <span id="targetPresetName" class="font-bold text-white">--</span>?</p>
+            
+            <div id="targetPresetDetails" class="bg-black/60 p-4 rounded-xl text-left text-[11px] space-y-1.5 text-gray-300 font-mono border border-gray-800">
+                <!-- DETALLES DÍA Y NOCHE SE INSERTAN AQUÍ -->
+            </div>
+
+            <div class="flex gap-3 pt-2">
+                <button type="button" onclick="closePresetConfirmModal()" class="w-1/2 bg-gray-800 hover:bg-gray-700 text-gray-300 font-bold py-2.5 rounded-xl transition-colors text-xs">
+                    CANCELAR
+                </button>
+                <button type="button" onclick="executePresetChange()" class="w-1/2 bg-orange-600 hover:bg-orange-500 text-white font-bold py-2.5 rounded-xl shadow-lg shadow-orange-600/40 transition-colors text-xs">
+                    APLICAR PRESET
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL GRÁFICAS HISTÓRICAS -->
+    <div id="chartModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+        <div class="glass-card max-w-2xl w-full p-6 rounded-2xl relative border border-orange-500/40">
+            <button type="button" onclick="closeChartModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            <h3 id="modalTitle" class="text-xl font-bold mb-4">Historial</h3>
+            <div class="w-full h-64">
+                <canvas id="telemetryChart"></canvas>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL CONFIGURACIÓN HORARIOS -->
+    <div id="configModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+        <div class="glass-card max-w-sm w-full p-6 rounded-3xl relative border border-orange-500/40">
+            <button type="button" onclick="closeConfigModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white text-xl">
+                <i class="fa-solid fa-xmark"></i>
+            </button>
+            
+            <div class="flex items-center justify-between mb-4">
+                <h3 id="configModalTitle" class="text-lg font-bold text-orange-400">Programar Horario</h3>
+                <label class="flex items-center cursor-pointer gap-2">
+                    <span id="toggleStateLabel" class="text-[10px] font-bold text-emerald-400 uppercase">ACTIVO</span>
+                    <input type="checkbox" id="configScheduleActive" onchange="toggleScheduleActiveState(this.checked)" class="sr-only peer" checked>
+                    <div class="w-9 h-5 bg-gray-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-orange-600 relative"></div>
+                </label>
+            </div>
+            
+            <form id="configForm" onsubmit="saveComponentConfig(event)" class="space-y-4">
+                <input type="hidden" id="configCompKey">
+                
+                <div id="groupAlias" class="hidden">
+                    <label class="block text-xs text-gray-400 mb-1 font-semibold uppercase tracking-wider">Nombre del Componente</label>
+                    <input type="text" id="configAliasInput" placeholder="Ej. FOCO UVB 5.0" class="w-full bg-black/70 border border-gray-700 rounded-xl p-2.5 text-white focus:border-orange-500 outline-none text-sm font-semibold">
+                </div>
+
+                <div class="grid grid-cols-2 gap-3 text-center">
+                    <div id="groupStart">
+                        <label id="labelStart" class="block text-xs text-gray-400 mb-1 font-semibold uppercase tracking-wider">Hora Inicio</label>
+                        <input type="time" id="configStartTime" oninput="updateLedOffCalculation()" class="w-full bg-black/70 border border-gray-700 rounded-xl p-3 text-white text-xl font-mono text-center focus:border-orange-500 outline-none">
+                    </div>
+                    <div id="groupEnd">
+                        <label class="block text-xs text-gray-400 mb-1 font-semibold uppercase tracking-wider">Hora Apagado</label>
+                        <input type="time" id="configEndTime" class="w-full bg-black/70 border border-gray-700 rounded-xl p-3 text-white text-xl font-mono text-center focus:border-orange-500 outline-none">
+                    </div>
+                </div>
+
+                <p id="ledOffInfoText" class="hidden text-center text-xs text-gray-400 italic">Se apagará automáticamente a las <span id="ledOffCalculatedTime" class="font-bold text-orange-400">19:00</span> hrs</p>
+
+                <div id="groupDays" class="hidden">
+                    <label class="block text-xs text-gray-400 mb-2 font-semibold uppercase tracking-wider text-center">Días de Repetición</label>
+                    <div class="flex justify-between items-center">
+                        <div class="day-pill selected" onclick="toggleDayPill(this, 0)" title="Lunes">L</div>
+                        <div class="day-pill selected" onclick="toggleDayPill(this, 1)" title="Martes">M</div>
+                        <div class="day-pill selected" onclick="toggleDayPill(this, 2)" title="Miércoles">X</div>
+                        <div class="day-pill selected" onclick="toggleDayPill(this, 3)" title="Jueves">J</div>
+                        <div class="day-pill selected" onclick="toggleDayPill(this, 4)" title="Viernes">V</div>
+                        <div class="day-pill" onclick="toggleDayPill(this, 5)" title="Sábado">S</div>
+                        <div class="day-pill" onclick="toggleDayPill(this, 6)" title="Domingo">D</div>
+                    </div>
+                </div>
+
+                <button type="submit" class="w-full bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 rounded-2xl transition-all shadow-lg shadow-orange-600/30 text-sm tracking-wider uppercase mt-2">
+                    GUARDAR HORARIO
+                </button>
+            </form>
+        </div>
+    </div>
+
+
+    <!-- LÓGICA JAVASCRIPT Y CONEXIÓN MQTT -->
+    <script>
+        const MQTT_HOST = "zfcfcbcb.ala.us-east-1.emqxsl.com";
+        const MQTT_PORT = 8084;
+        const DEVICE_MAC = "ITr_PType_F75D58";
+        const CLIENT_ID = "WebApp_Client_" + Math.random().toString(16).substr(2, 8);
+
+        let client;
+        let isMqttConnected = false;
+        let actuatorStates = { heat: false, fan: false, pump: false, led: false, plugA: false, plugB: false };
+        let historyData = { labels: [], warm: [], cool: [], humidity: [] };
+        let lastLoggedMinute = "";
+        let currentChart = null;
+
+        // TABLA REAL DE PRESETS DE NEON DB
+        let dbPresetsList = [
+            { id: 1, code: "DEFAULT_SETUP", name: "Preset General Estándar", warm_min_day: 32.00, warm_max_day: 35.00, cool_min_day: 25.00, cool_max_day: 28.00, warm_min_night: 22.00, warm_max_night: 25.00, cool_min_night: 21.00, cool_max_night: 24.00, hum: 80.00, hum_rel: 5.00 },
+            { id: 2, code: "PRESET_GECKO_LEOPARDO", name: "Hábitat Oficial Gecko Leopardo", warm_min_day: 30.00, warm_max_day: 32.00, cool_min_day: 24.00, cool_max_day: 26.00, warm_min_night: 18.00, warm_max_night: 20.00, cool_min_night: 16.00, cool_max_night: 18.00, hum: 65.00, hum_rel: 5.00 },
+            { id: 3, code: "PRESET_GECKO_CRESTADO", name: "Hábitat Oficial Gecko Crestado", warm_min_day: 26.00, warm_max_day: 28.00, cool_min_day: 20.00, cool_max_day: 22.00, warm_min_night: 16.00, warm_max_night: 18.00, cool_min_night: 14.00, cool_max_night: 16.00, hum: 80.00, hum_rel: 5.00 },
+            { id: 4, code: "PRESET_CAMALEON_VELADO", name: "Hábitat Oficial Camaleón Velado", warm_min_day: 33.00, warm_max_day: 35.00, cool_min_day: 24.00, cool_max_day: 26.00, warm_min_night: 19.00, warm_max_night: 21.00, cool_min_night: 17.00, cool_max_night: 19.00, hum: 60.00, hum_rel: 5.00 },
+            { id: 5, code: "PRESET_SKINKO_OJOS_ROJOS", name: "Hábitat Oficial Skinko Ojos Rojos", warm_min_day: 25.00, warm_max_day: 27.00, cool_min_day: 22.00, cool_max_day: 24.00, warm_min_night: 18.00, warm_max_night: 20.00, cool_min_night: 16.00, cool_max_night: 18.00, hum: 85.00, hum_rel: 5.00 },
+            { id: 6, code: "PRESET_PITON_BOLA", name: "Hábitat Oficial Pitón Bola", warm_min_day: 28.00, warm_max_day: 30.00, cool_min_day: 24.00, cool_max_day: 26.00, warm_min_night: 22.00, warm_max_night: 24.00, cool_min_night: 20.00, cool_max_night: 22.00, hum: 65.00, hum_rel: 5.00 },
+            { id: 7, code: "PRESET_GECKO_CHINO_CUEVA", name: "Hábitat Oficial Gecko Chino de Cueva", warm_min_day: 26.00, warm_max_day: 28.00, cool_min_day: 24.00, cool_max_day: 26.00, warm_min_night: 18.00, warm_max_night: 20.00, cool_min_night: 16.00, cool_max_night: 18.00, hum: 80.00, hum_rel: 10.00 },
+            { id: 8, code: "PRESET_SERPIENTE_REY", name: "Hábitat Oficial Serpiente Rey California", warm_min_day: 30.00, warm_max_day: 32.00, cool_min_day: 22.00, cool_max_day: 24.00, warm_min_night: 16.00, warm_max_night: 18.00, cool_min_night: 14.00, cool_max_night: 16.00, hum: 55.00, hum_rel: 5.00 },
+            { id: 9, code: "PRESET_RANA_OJOS_ROJOS", name: "Hábitat Oficial Rana Verde Ojos Rojos", warm_min_day: 26.00, warm_max_day: 28.00, cool_min_day: 20.00, cool_max_day: 22.00, warm_min_night: 18.00, warm_max_night: 20.00, cool_min_night: 15.00, cool_max_night: 16.00, hum: 70.00, hum_rel: 10.00 },
+            { id: 10, code: "PRESET_DRAGON_BARBADO", name: "Hábitat Oficial Dragón Barbado", warm_min_day: 32.00, warm_max_day: 35.00, cool_min_day: 25.00, cool_max_day: 26.00, warm_min_night: 20.00, warm_max_night: 22.00, cool_min_night: 18.00, cool_max_night: 20.00, hum: 40.00, hum_rel: 5.00 }
+        ];
+
+        let defaultComponentConfigs = {
+            plugA: { enabled: true, alias: "FOCO UVB 5.0", start: "08:00", end: "20:00", days: [true, true, true, true, true, true, true] },
+            plugB: { enabled: true, alias: "LÁMPARA CERÁMICA", start: "08:00", end: "20:00", days: [true, true, true, true, true, false, true] },
+            led: { enabled: true, start: "07:00" },
+            mist: { enabled: true, start: "12:15" }
+        };
+
+        let savedConfigsStr = localStorage.getItem("terrariumComponentConfigs");
+        let componentConfigs = savedConfigsStr ? JSON.parse(savedConfigsStr) : defaultComponentConfigs;
+
+        let selectedPresetCode = localStorage.getItem("selectedPresetCode") || "DEFAULT_SETUP";
+        let pendingPresetCode = selectedPresetCode;
+        let latestTelemetry = { temp_warm: 0, temp_cool: 0, humidity: 0 };
+
+        // EVALUADOR DEL FOTOPERÍODO (DÍA / NOCHE)
+        function checkIsDaytime() {
+            const now = new Date();
+            const currentMin = now.getHours() * 60 + now.getMinutes();
+            
+            const ledStart = componentConfigs.led ? (componentConfigs.led.start || "07:00") : "07:00";
+            const [sH, sM] = ledStart.split(":").map(Number);
+            const startMin = sH * 60 + sM;
+            const endMin = (startMin + 12 * 60) % (24 * 60);
+
+            if (startMin < endMin) {
+                return currentMin >= startMin && currentMin < endMin;
+            } else {
+                return currentMin >= startMin || currentMin < endMin;
+            }
+        }
+
+        setInterval(() => {
+            document.getElementById("clockDisplay").innerText = new Date().toLocaleTimeString();
+            renderDbPresetsUI();
+        }, 1000);
+
+        function renderDbPresetsUI() {
+            const selectEl = document.getElementById("presetSelect");
+            selectEl.innerHTML = "";
+            
+            dbPresetsList.forEach(p => {
+                const opt = document.createElement("option");
+                opt.value = p.code;
+                opt.innerText = `${p.name}  —  Día: ${p.warm_min_day}-${p.warm_max_day}°C | Hum: ${p.hum}%`;
+                if (p.code === selectedPresetCode) opt.selected = true;
+                selectEl.appendChild(opt);
+            });
+
+            const activeObj = dbPresetsList.find(p => p.code === selectedPresetCode) || dbPresetsList[0];
+            document.getElementById("activePresetBadge").innerText = activeObj.name;
+
+            const isDay = checkIsDaytime();
+            const warmMin = isDay ? activeObj.warm_min_day : activeObj.warm_min_night;
+            const warmMax = isDay ? activeObj.warm_max_day : activeObj.warm_max_night;
+            const coolMin = isDay ? activeObj.cool_min_day : activeObj.cool_min_night;
+            const coolMax = isDay ? activeObj.cool_max_day : activeObj.cool_max_night;
+
+            const humMin = Math.max(0, activeObj.hum - activeObj.hum_rel);
+            const humMax = Math.min(100, activeObj.hum + activeObj.hum_rel);
+
+            document.getElementById("goalWarmVal").innerText = `OBJETIVO: ${warmMin.toFixed(1)}°C - ${warmMax.toFixed(1)}°C`;
+            document.getElementById("goalCoolVal").innerText = `OBJETIVO: ${coolMin.toFixed(1)}°C - ${coolMax.toFixed(1)}°C`;
+            document.getElementById("goalHumidityVal").innerText = `OBJETIVO: ${humMin.toFixed(0)}% - ${humMax.toFixed(0)}%`;
+
+            evaluateParameterWarnings();
+        }
+
+        function evaluateParameterWarnings() {
+            const activeObj = dbPresetsList.find(p => p.code === selectedPresetCode) || dbPresetsList[0];
+            const isDay = checkIsDaytime();
+
+            const warmMin = isDay ? activeObj.warm_min_day : activeObj.warm_min_night;
+            const warmMax = isDay ? activeObj.warm_max_day : activeObj.warm_max_night;
+
+            const humMin = Math.max(0, activeObj.hum - activeObj.hum_rel);
+            const humMax = Math.min(100, activeObj.hum + activeObj.hum_rel);
+
+            // WARM WARNING
+            if (latestTelemetry.temp_warm > 0 && (latestTelemetry.temp_warm < warmMin || latestTelemetry.temp_warm > warmMax)) {
+                document.getElementById("warnWarmBadge").classList.remove("hidden");
+            } else {
+                document.getElementById("warnWarmBadge").classList.add("hidden");
+            }
+
+            // HUMIDITY WARNING
+            if (latestTelemetry.humidity > 0 && (latestTelemetry.humidity < humMin || latestTelemetry.humidity > humMax)) {
+                document.getElementById("warnHumBadge").classList.remove("hidden");
+            } else {
+                document.getElementById("warnHumBadge").classList.add("hidden");
+            }
+        }
+
+        function initMQTT() {
+            try {
+                client = new Paho.MQTT.Client(MQTT_HOST, MQTT_PORT, CLIENT_ID);
+                client.onConnectionLost = (r) => {
+                    isMqttConnected = false;
+                    setTimeout(initMQTT, 3000);
+                };
+                client.onMessageArrived = onMessageArrived;
+
+                client.connect({
+                    useSSL: true,
+                    timeout: 5,
+                    userName: "esp32_PType",
+                    password: "PType2026",
+                    onSuccess: () => {
+                        isMqttConnected = true;
+                        client.subscribe(`TERRARIUM/${DEVICE_MAC}/TELEMETRY`, { qos: 0 });
+                        client.subscribe(`TERRARIUM/${DEVICE_MAC}/ALERTS`, { qos: 0 });
+                        renderDbPresetsUI();
+                    },
+                    onFailure: () => { 
+                        isMqttConnected = false; 
+                        renderDbPresetsUI();
+                    }
+                });
+            } catch(e) { 
+                isMqttConnected = false; 
+                renderDbPresetsUI();
+            }
+        }
+
+        function onMessageArrived(message) {
+            try {
+                const topic = message.destinationName;
+                const payload = JSON.parse(message.payloadString);
+
+                if (topic.endsWith("/TELEMETRY")) {
+                    if (payload.temp_warm !== undefined) {
+                        latestTelemetry.temp_warm = payload.temp_warm;
+                        document.getElementById("tempWarmVal").innerText = payload.temp_warm.toFixed(1) + "°C";
+                    }
+                    if (payload.temp_cool !== undefined) {
+                        latestTelemetry.temp_cool = payload.temp_cool;
+                        document.getElementById("tempCoolVal").innerText = payload.temp_cool.toFixed(1) + "°C";
+                    }
+                    
+                    if (payload.humidity !== undefined) {
+                        latestTelemetry.humidity = payload.humidity;
+                        document.getElementById("humidityVal").innerText = payload.humidity.toFixed(0) + "%";
+                        document.getElementById("waterWaveBg").style.height = `${Math.min(100, Math.max(0, payload.humidity))}%`;
+                    }
+
+                    evaluateParameterWarnings();
+
+                    if (payload.tank_pct !== undefined) {
+                        document.getElementById("tankWaterFill").style.height = `${payload.tank_pct}%`;
+                        document.getElementById("tankWaterVal").innerText = `${payload.tank_pct}%`;
+                    }
+                    if (payload.sump_pct !== undefined) {
+                        document.getElementById("tankSumpFill").style.height = `${payload.sump_pct}%`;
+                        document.getElementById("tankSumpVal").innerText = `${payload.sump_pct}%`;
+                    }
+
+                    if (payload.actuators) {
+                        actuatorStates = payload.actuators;
+                        updateActuatorUI();
+                    }
+
+                    const currentMinute = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                    if (currentMinute !== lastLoggedMinute) {
+                        lastLoggedMinute = currentMinute;
+
+                        if (historyData.labels.length > 30) {
+                            historyData.labels.shift(); historyData.warm.shift(); historyData.cool.shift(); historyData.humidity.shift();
+                        }
+                        historyData.labels.push(currentMinute);
+                        historyData.warm.push(payload.temp_warm);
+                        historyData.cool.push(payload.temp_cool);
+                        historyData.humidity.push(payload.humidity);
+
+                        if (currentChart) currentChart.update();
+                    }
+                }
+            } catch(err) { console.error("Error parseando mensaje MQTT:", err); }
+        }
+
+        function updateActuatorUI() {
+            const map = { heat: "act-heat", fan: "act-fan", pump: "act-pump", led: "act-led", plugA: "act-plugA", plugB: "act-plugB" };
+            Object.keys(map).forEach(key => {
+                const el = document.getElementById(map[key]);
+                if (el) {
+                    el.classList.remove("act-state-on", "act-state-off");
+                    if (actuatorStates[key]) el.classList.add("act-state-on");
+                    else el.classList.add("act-state-off");
+                }
+            });
+        }
+
+        function toggleActuator(comp) {
+            if (comp === 'heat' || comp === 'fan' || comp === 'pump') return;
+
+            actuatorStates[comp] = !actuatorStates[comp];
+            updateActuatorUI();
+
+            if (isMqttConnected) {
+                const payload = JSON.stringify({
+                    request_id: "req_web_ovr_" + Date.now(),
+                    command: "OVERRIDE_COMPONENT",
+                    component: comp,
+                    state: actuatorStates[comp]
+                });
+                const msg = new Paho.MQTT.Message(payload);
+                msg.destinationName = `TERRARIUM/${DEVICE_MAC}/COMMAND/OVERRIDE`;
+                client.send(msg);
+            }
+        }
+
+        function promptPresetChange() {
+            const selectEl = document.getElementById("presetSelect");
+            pendingPresetCode = selectEl.value;
+            const targetObj = dbPresetsList.find(p => p.code === pendingPresetCode);
+            
+            document.getElementById("targetPresetName").innerText = targetObj.name;
+            document.getElementById("targetPresetDetails").innerHTML = `
+                <div class="text-orange-400 font-bold border-b border-gray-700/50 pb-1 mb-2">PARÁMETROS DÍA:</div>
+                <div>• Temp Warm Día: <span class="text-white font-bold">${targetObj.warm_min_day}°C - ${targetObj.warm_max_day}°C</span></div>
+                <div>• Temp Cool Día: <span class="text-white font-bold">${targetObj.cool_min_day}°C - ${targetObj.cool_max_day}°C</span></div>
+                
+                <div class="text-sky-400 font-bold border-b border-gray-700/50 pb-1 mt-3 mb-2">PARÁMETROS NOCHE:</div>
+                <div>• Temp Warm Noche: <span class="text-white font-bold">${targetObj.warm_min_night}°C - ${targetObj.warm_max_night}°C</span></div>
+                <div>• Temp Cool Noche: <span class="text-white font-bold">${targetObj.cool_min_night}°C - ${targetObj.cool_max_night}°C</span></div>
+                
+                <div class="text-blue-400 font-bold border-b border-gray-700/50 pb-1 mt-3 mb-2">HUMEDAD:</div>
+                <div>• Rango Humedad: <span class="text-white font-bold">${targetObj.hum}% (±${targetObj.hum_rel}%)</span></div>
+            `;
+            document.getElementById("presetConfirmModal").classList.remove("hidden");
+        }
+
+        function closePresetConfirmModal() { 
+            document.getElementById("presetSelect").value = selectedPresetCode;
+            pendingPresetCode = selectedPresetCode;
+            document.getElementById("presetConfirmModal").classList.add("hidden"); 
+        }
+
+        function executePresetChange() {
+            selectedPresetCode = pendingPresetCode;
+            localStorage.setItem("selectedPresetCode", selectedPresetCode);
+
+            renderDbPresetsUI();
+
+            if (isMqttConnected) {
+                const payload = JSON.stringify({
+                    request_id: "req_web_preset_" + Date.now(),
+                    command: "UPDATE_PRESET",
+                    preset_code: selectedPresetCode
+                });
+                const msg = new Paho.MQTT.Message(payload);
+                msg.destinationName = `TERRARIUM/${DEVICE_MAC}/COMMAND/PRESET`;
+                client.send(msg);
+            }
+
+            document.getElementById("presetConfirmModal").classList.add("hidden");
+        }
+
+        function openChartModal(title, type) {
+            document.getElementById("modalTitle").innerText = `Historial de ${title}`;
+            document.getElementById("chartModal").classList.remove("hidden");
+
+            const ctx = document.getElementById("telemetryChart").getContext("2d");
+            if (currentChart) currentChart.destroy();
+
+            let dataValues = [], strokeColor = '#FF6600', fillColor = 'rgba(255, 102, 0, 0.15)';
+            if (type === 'warm') { dataValues = historyData.warm; strokeColor = '#f87171'; fillColor = 'rgba(248, 113, 113, 0.15)'; }
+            else if (type === 'cool') { dataValues = historyData.cool; strokeColor = '#38bdf8'; fillColor = 'rgba(56, 189, 248, 0.15)'; }
+            else if (type === 'humidity') { dataValues = historyData.humidity; strokeColor = '#3b82f6'; fillColor = 'rgba(59, 130, 246, 0.2)'; }
+
+            currentChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: historyData.labels.length ? historyData.labels : ['03:00', '03:05', '03:10'],
+                    datasets: [{
+                        label: title,
+                        data: dataValues.length ? dataValues : [86, 86.3, 86.4],
+                        borderColor: strokeColor, backgroundColor: fillColor, fill: true, tension: 0.4, borderWidth: 3
+                    }]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: { x: { grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#aaa' } }, y: { grid: { color: 'rgba(255,255,255,0.08)' }, ticks: { color: '#aaa' } } }
+                }
+            });
+        }
+
+        function closeChartModal() { document.getElementById("chartModal").classList.add("hidden"); }
+
+        function openConfigModal(compKey, defaultName) {
+            document.getElementById("configCompKey").value = compKey;
+            document.getElementById("configModalTitle").innerText = `Horario ${defaultName}`;
+
+            const config = componentConfigs[compKey] || { enabled: true, start: "08:00", end: "20:00", days: [true, true, true, true, true, true, true], alias: defaultName };
+            
+            document.getElementById("configScheduleActive").checked = config.enabled;
+            toggleScheduleActiveState(config.enabled);
+
+            const gAlias = document.getElementById("groupAlias");
+            const gEnd = document.getElementById("groupEnd");
+            const gDays = document.getElementById("groupDays");
+            const ledInfo = document.getElementById("ledOffInfoText");
+            const lblStart = document.getElementById("labelStart");
+
+            if (compKey === "plugA" || compKey === "plugB") {
+                gAlias.classList.remove("hidden"); gEnd.classList.remove("hidden"); gDays.classList.remove("hidden");
+                ledInfo.classList.add("hidden");
+                lblStart.innerText = "Hora Encendido";
+                
+                document.getElementById("configAliasInput").value = config.alias || defaultName;
+                document.getElementById("configStartTime").value = config.start;
+                document.getElementById("configEndTime").value = config.end;
+
+                renderDayPills(config.days);
+            } else if (compKey === "led") {
+                gAlias.classList.add("hidden"); gEnd.classList.add("hidden"); gDays.classList.add("hidden");
+                ledInfo.classList.remove("hidden");
+                lblStart.innerText = "Inicio Fotoperíodo";
+                document.getElementById("configStartTime").value = config.start;
+                updateLedOffCalculation();
+            } else if (compKey === "mist") {
+                gAlias.classList.add("hidden"); gEnd.classList.add("hidden"); gDays.classList.add("hidden");
+                ledInfo.classList.add("hidden");
+                lblStart.innerText = "Hora de Riego";
+                document.getElementById("configStartTime").value = config.start;
+            }
+
+            document.getElementById("configModal").classList.remove("hidden");
+        }
+
+        function toggleScheduleActiveState(active) {
+            const lbl = document.getElementById("toggleStateLabel");
+            if (active) {
+                lbl.innerText = "ACTIVO";
+                lbl.className = "text-[10px] font-bold text-emerald-400 uppercase";
+            } else {
+                lbl.innerText = "INACTIVO";
+                lbl.className = "text-[10px] font-bold text-red-400 uppercase";
+            }
+        }
+
+        function updateLedOffCalculation() {
+            const startTimeStr = document.getElementById("configStartTime").value || "07:00";
+            const [startH, startM] = startTimeStr.split(":").map(Number);
+            const offH = (startH + 12) % 24;
+            const formattedOff = `${String(offH).padStart(2, '0')}:${String(startM).padStart(2, '0')}`;
+            document.getElementById("ledOffCalculatedTime").innerText = formattedOff;
+        }
+
+        function renderDayPills(daysArr) {
+            const pills = document.querySelectorAll("#groupDays .day-pill");
+            pills.forEach((p, idx) => {
+                if (daysArr[idx]) p.classList.add("selected");
+                else p.classList.remove("selected");
+            });
+        }
+
+        function toggleDayPill(el, index) {
+            el.classList.toggle("selected");
+            const compKey = document.getElementById("configCompKey").value;
+            if (componentConfigs[compKey]) {
+                componentConfigs[compKey].days[index] = el.classList.contains("selected");
+            }
+        }
+
+        function closeConfigModal() { document.getElementById("configModal").classList.add("hidden"); }
+
+        function saveComponentConfig(e) {
+            e.preventDefault();
+            const compKey = document.getElementById("configCompKey").value;
+            const isEnabled = document.getElementById("configScheduleActive").checked;
+            const startTimeStr = document.getElementById("configStartTime").value || "08:00";
+            const [startH, startM] = startTimeStr.split(":").map(Number);
+
+            if (!componentConfigs[compKey]) componentConfigs[compKey] = {};
+            componentConfigs[compKey].enabled = isEnabled;
+            componentConfigs[compKey].start = startTimeStr;
+
+            if (compKey === "plugA" || compKey === "plugB") {
+                const endTimeStr = document.getElementById("configEndTime").value || "20:00";
+                const aliasVal = document.getElementById("configAliasInput").value;
+                
+                componentConfigs[compKey].end = endTimeStr;
+                componentConfigs[compKey].alias = aliasVal;
+
+                const labelEl = document.getElementById(`label-${compKey}`);
+                if (labelEl && aliasVal) labelEl.innerText = aliasVal.toUpperCase();
+            }
+
+            localStorage.setItem("terrariumComponentConfigs", JSON.stringify(componentConfigs));
+
+            if (isMqttConnected) {
+                let schedulePayload = {
+                    request_id: "req_web_sched_" + Date.now(),
+                    command: "UPDATE_SCHEDULE"
+                };
+
+                if (compKey === "plugA" || compKey === "plugB") {
+                    const endTimeStr = document.getElementById("configEndTime").value || "20:00";
+                    const [endH, endM] = endTimeStr.split(":").map(Number);
+                    schedulePayload[compKey] = {
+                        enabled: isEnabled, 
+                        alias: componentConfigs[compKey].alias,
+                        days: componentConfigs[compKey].days, 
+                        start_hour: startH, 
+                        start_min: startM, 
+                        end_hour: endH, 
+                        end_min: endM
+                    };
+                } else if (compKey === "led") {
+                    schedulePayload.day_start_hour = startH;
+                    schedulePayload.day_start_minute = startM;
+                } else if (compKey === "mist") {
+                    schedulePayload.misting = { 
+                        enabled: isEnabled, 
+                        hour: startH, 
+                        minute: startM, 
+                        duration_secs: 5 
+                    };
+                }
+
+                const msg = new Paho.MQTT.Message(JSON.stringify(schedulePayload));
+                msg.destinationName = `TERRARIUM/${DEVICE_MAC}/COMMAND/SCHEDULE`;
+                client.send(msg);
+            }
+
+            closeConfigModal();
+            renderDbPresetsUI();
+        }
+
+        function toggleAlertsDrawer() {
+            document.getElementById("alertsDrawer").classList.toggle("hidden");
+        }
+
+        function discardAlert(cardId) {
+            const el = document.getElementById(cardId);
+            if (el) el.remove();
+        }
+
+        window.onload = initMQTT;
+    </script>
+</body>
+</html>
